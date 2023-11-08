@@ -1,0 +1,4 @@
+syslog_ng_exporter
+vendor/*/
+.promu.yml
+/syslog_ng_api

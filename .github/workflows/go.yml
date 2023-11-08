@@ -1,0 +1,96 @@
+# This workflow will build the app, create a docker image then upload the image to Amazon ECR
+
+
+name: Go
+
+on:
+  push:
+    branches:
+      - "main"
+      - "dev"
+  pull_request:
+    branches:
+      - "main"
+      - "dev"
+
+permissions:
+  id-token: write   # This is required for requesting the JWT
+  contents: read    # This is required for actions/checkout
+env:
+  AWS_REGION: "us-east-2"
+  AWS_ROLE: "<ADD the ARN of your role to permit github Action-AssumeRoleWithAction>"
+  AWS_ROLE_SESSION: "<add a name for the session>"
+
+jobs:
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.20'
+
+    - name: Build
+      run: go build -v syslog_ng_api.go
+
+    - name: Upload syslog_ng_api artifact  
+      uses: actions/upload-artifact@v3
+      with:
+        name: syslog_ng_api
+        path: syslog_ng_api
+
+    #- name: Run vet & lint
+    #  run: |
+    #    go vet .
+    #    golint .
+
+    #- name: Test
+    #  run: go test
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [build]
+    #if: ${{ github.ref == 'refs/heads/dev' && github.event_name == 'push' }}
+    if: ${{ github.event_name == 'push' }}
+    
+    steps:
+      - name: Extract branch name
+        shell: bash
+        run: echo "branch=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
+        id: extract_branch
+
+      - name: Check out code
+        uses: actions/checkout@v3
+
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ env.AWS_ROLE }}
+          role-session-name: ${{ env.AWS_ROLE_SESSION }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Sts GetCallerIdentity
+        run: |
+            aws sts get-caller-identity      
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Download syslog_ng_api artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: syslog_ng_api
+
+      - name: Build, tag, and push image to AWS ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ipe-syslog-ng
+          IMAGE_TAG: ${{ steps.extract_branch.outputs.branch }}
+        run: |
+            docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+            docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
